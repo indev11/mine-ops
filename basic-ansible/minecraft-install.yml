@@ -1,0 +1,114 @@
+---
+- hosts: localhost
+  vars:
+    minecraft_version: "latest"
+
+  tasks:
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/dnf_module.html
+    - name: Install Java
+      apt:
+        name: openjdk-17-jdk
+        state: present
+
+    # jq could be installed anywhere, but we are only checking /usr/bin/
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/stat_module.html
+    - name: Check and Set jq path
+      stat: 
+        path: /usr/bin/jq
+      register: jq_installed
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/group_module.html
+    - name: Create Minecraft group
+      group:
+        name: "minecraft"
+        state: present
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/user_module.html
+    - name: Create Minecraft user
+      user:
+        name: "minecraft"
+        group: "minecraft"
+        comment: "Minecraft Server Manager"
+        state: present
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/file_module.html
+    - name: Create Minecraft Server Directory
+      file: 
+        path: /opt/minecraft
+        owner: "minecraft"
+        group: "minecraft"
+        state: directory
+        mode: 0755
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/shell_module.html
+    - name: Install jq
+      shell: curl -o /usr/bin/jq -sL https://github.com/stedolan/jq/releases/download/jq-1.6/jq-linux64 && chmod +x /usr/bin/jq
+      when: jq_installed.stat.exists != true
+
+    - name: Download specific Minecraft Server
+      shell: |
+        curl -o /opt/minecraft/server.jar $(curl `curl -sL https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r '.versions[] | select (.id == "{{ minecraft_version }}") | .url'` | jq -r '.downloads.server.url')
+      when: minecraft_version != "latest"
+
+    - name: Download latest Minecraft Server
+      shell: |
+        curl -o /opt/minecraft/server.jar -sL $(curl `curl -sL https://launchermeta.mojang.com/mc/game/version_manifest.json | jq -r '.latest.release as $release | .versions[] | select(.id == $release) | .url'` | jq -r '.downloads.server.url')
+      when: minecraft_version == "latest"
+
+    - name: Set owner of server.jar
+      file:
+        path: /opt/minecraft/server.jar
+        owner: minecraft
+        group: minecraft
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/copy_module.html
+    - name: Copy EULA
+      copy:
+        src: eula.txt
+        owner: minecraft
+        group: minecraft
+        dest: /opt/minecraft/eula.txt
+
+    - name: Copy systemd service
+      copy:
+        src: minecraft.service
+        dest: /usr/lib/systemd/system/minecraft.service
+    
+    # https://docs.ansible.com/ansible/latest/collections/ansible/posix/firewalld_module.html
+    - name: Open Minecraft Server Port on Firewall
+      firewalld:
+        port: 25565/tcp
+        permanent: yes
+        state: enabled
+
+    - name: Open Minecraft Query Port on Firewall
+      firewalld:
+        port: 25565/udp
+        permanent: yes
+        state: enabled
+
+    # https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_module.html
+    - name: Start Minecraft Server
+      systemd:
+        name: minecraft
+        enabled: true
+        state: started
+    
+    - name: Disable online mode in server.properties
+      lineinfile:
+        path: /opt/minecraft/server.properties
+        regexp: '^online-mode='
+        line: 'online-mode=false'
+      become: yes
+
+    # Wait up to 2 minutes for Minecraft Server to become ready
+    - name: Verify server is up
+      shell: tail /opt/minecraft/logs/latest.log
+      register: server_status
+      until: server_status.stdout.find('Done') != -1
+      retries: 10
+      delay: 20
+
+  collections:
+    - ansible.posix
+    - community.general
