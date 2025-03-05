@@ -1,0 +1,16 @@
+# Our base/starting Image
+FROM eclipse-temurin:21
+
+# Creating a dir for Minecraft Server
+RUN mkdir /minecraft
+
+# Telling Docker this is where we "live" currently. Similar to our "current directory" in Linux/Unix, all further commands "take place" in WORKDIR, which for us is "/minecraft"
+WORKDIR /minecraft
+
+# Copying over our files (eula and server.jar) to our /minecraft dir which is known due to the previous WORKDIR Instruction
+# We will talk about server.jar being here in a moment
+COPY eula.txt .
+COPY server.jar .
+
+# And the final line of our Dockerfile is "what to do when I'm run". Which this should look very similar to what we did way back in our manual setup of Minecraft Server.
+CMD ["java", "-jar", "server.jar"]
